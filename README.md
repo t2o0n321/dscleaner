@@ -14,17 +14,21 @@ A simple and efficient command-line tool for removing `.DS_Store` files from you
 - A C++17 compatible compiler (e.g., `clang++` on macOS).
 - The `make` build automation tool.
 
-## Building
+## Installation
 
-To build the project, simply run `make` in the root directory:
+### With Homebrew (Recommended)
 
 ```bash
-make
+# 1. Add the custom tap
+brew tap t2o0n321/dscleaner
+
+# 2. Install the formula
+brew install dscleaner
 ```
 
-The executable will be created at `bin/dscleaner`.
+### Build from Source
 
-To recompile from scratch, you can run `make clean && make`.
+If you prefer to build from source, you can use the `make` command.
 
 ## Usage
 
