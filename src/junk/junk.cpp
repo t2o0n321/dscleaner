@@ -1,21 +1,14 @@
 #include <junk.hpp>
 
+namespace junk {
 namespace {
 
 // Exact directory / file names that macOS creates as metadata.
 const std::vector<std::string> kExactNames = {
-    ".DS_Store",
-    ".AppleDouble",
-    ".AppleDB",
-    ".AppleDesktop",
-    ".Spotlight-V100",
-    ".Trashes",
-    ".fseventsd",
-    ".TemporaryItems",
-    ".DocumentRevisions-V100",
-    ".apdisk",
-    ".VolumeIcon.icns",
-    ".com.apple.timemachine.donotpresent",
+    ".DS_Store",     ".AppleDouble",     ".AppleDB",
+    ".AppleDesktop", ".Spotlight-V100",  ".Trashes",
+    ".fseventsd",    ".TemporaryItems",  ".DocumentRevisions-V100",
+    ".apdisk",       ".VolumeIcon.icns", ".com.apple.timemachine.donotpresent",
 };
 
 // Equivalent glob patterns for external tools (tar/rsync/zip).
@@ -35,22 +28,22 @@ const std::vector<std::string> kGlobs = {
     ".com.apple.timemachine.donotpresent",
 };
 
-} // namespace
+}  // namespace
 
-bool junk::isJunk(const std::string& filename) {
-    // AppleDouble side-car files: "._<anything>". This is the family the user
-    // specifically complained about leaking onto USB drives.
-    if (filename.size() >= 2 && filename[0] == '.' && filename[1] == '_') {
-        return true;
+bool IsJunk(const std::string& filename) {
+  // AppleDouble side-car files: "._<anything>". This is the family that leaks
+  // onto USB drives when copying from macOS.
+  if (filename.size() >= 2 && filename[0] == '.' && filename[1] == '_') {
+    return true;
+  }
+  for (const auto& name : kExactNames) {
+    if (filename == name) {
+      return true;
     }
-    for (const auto& name : kExactNames) {
-        if (filename == name) {
-            return true;
-        }
-    }
-    return false;
+  }
+  return false;
 }
 
-const std::vector<std::string>& junk::globPatterns() {
-    return kGlobs;
-}
+const std::vector<std::string>& GlobPatterns() { return kGlobs; }
+
+}  // namespace junk

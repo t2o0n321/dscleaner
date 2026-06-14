@@ -1,5 +1,5 @@
 CXX = g++
-CXXFLAGS = -std=c++17 -Iinclude -Os -ffunction-sections -fdata-sections
+CXXFLAGS = -std=c++17 -Iinclude -Os -ffunction-sections -fdata-sections -MMD -MP
 BINNAME = dscleaner
 
 # Platform-specific linker flags:
@@ -18,6 +18,8 @@ BINDIR = bin
 
 SOURCES = $(shell find $(SRCDIR) -name '*.cpp')
 OBJECTS = $(patsubst $(SRCDIR)/%.cpp,$(OBJDIR)/%.o,$(SOURCES))
+DEPS = $(OBJECTS:.o=.d)
+HEADERS = $(shell find include -name '*.hpp')
 EXECUTABLE = $(BINDIR)/$(BINNAME)
 
 all: $(EXECUTABLE)
@@ -30,7 +32,18 @@ $(OBJDIR)/%.o: $(SRCDIR)/%.cpp
 	@mkdir -p $(@D)
 	$(CXX) $(CXXFLAGS) -c -o $@ $<
 
+# Apply the Google C++ style (.clang-format) in place.
+format:
+	clang-format -i $(SOURCES) $(HEADERS)
+
+# Static analysis against the project's .clang-tidy baseline.
+lint:
+	clang-tidy $(SOURCES) -- $(CXXFLAGS)
+
 clean:
 	rm -rf $(OBJDIR) $(BINDIR)
 
-.PHONY: all clean
+# Pull in auto-generated header dependencies so edits to .hpp trigger rebuilds.
+-include $(DEPS)
+
+.PHONY: all clean format lint

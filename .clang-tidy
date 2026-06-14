@@ -1,0 +1,27 @@
+# dscleaner lint baseline. Run from the repo root:
+#   clang-tidy src/*.cpp src/*/*.cpp -- -std=c++17 -Iinclude
+#
+# Deliberately disabled checks (with rationale):
+#   performance-avoid-endl        - std::endl is intentional: the long-running
+#                                   `watch` daemon writes to launchd log files
+#                                   and we want each line flushed promptly.
+#   misc-include-cleaner          - too noisy; flags transitive STL includes.
+#   misc-no-recursion             - CopyRecursive is intentionally recursive.
+#   modernize-use-trailing-return-type / *-braces-around-statements - stylistic,
+#                                   already covered by .clang-format.
+Checks: >
+  -*,
+  bugprone-*,
+  google-*,
+  performance-*,
+  misc-*,
+  modernize-use-override,
+  modernize-use-nullptr,
+  readability-identifier-naming,
+  -performance-avoid-endl,
+  -misc-include-cleaner,
+  -misc-no-recursion,
+  -google-readability-todo
+WarningsAsErrors: ''
+HeaderFilterRegex: '.*\.hpp$'
+FormatStyle: file

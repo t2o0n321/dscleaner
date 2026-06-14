@@ -1,0 +1,9 @@
+---
+# dscleaner follows the Google C++ Style Guide.
+# Format the whole tree with: clang-format -i $(find src include -name '*.*pp')
+BasedOnStyle: Google
+Standard: c++17
+ColumnLimit: 100
+DerivePointerAlignment: false
+PointerAlignment: Left
+...

@@ -17,11 +17,11 @@ namespace junk {
 
 // Returns true if a single path component (a file or directory *name*, not a
 // full path) is macOS junk that should be removed / excluded.
-bool isJunk(const std::string& filename);
+bool IsJunk(const std::string& filename);
 
-// Glob patterns suitable for passing to external tools such as `tar
-// --exclude=` and `rsync --exclude=`. These mirror isJunk() but are expressed
-// as shell globs.
-const std::vector<std::string>& globPatterns();
+// Glob patterns suitable for passing to external tools such as
+// `tar --exclude=` and `rsync --exclude=`. These mirror IsJunk() but are
+// expressed as shell globs.
+const std::vector<std::string>& GlobPatterns();
 
-} // namespace junk
+}  // namespace junk

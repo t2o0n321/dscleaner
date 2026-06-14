@@ -40,7 +40,13 @@ brew install dscleaner
 
 ### Build from Source
 
-If you prefer to build from source, you can use the `make` command.
+```bash
+make            # builds ./bin/dscleaner
+make clean      # removes build artifacts
+```
+
+On macOS the build links `CoreServices` for native FSEvents; on Linux it falls
+back to a portable polling watcher.
 
 ## Usage
 
@@ -137,6 +143,29 @@ dscleaner install-service [path...]       Register background service (launchd)
 dscleaner uninstall-service               Remove the background service
 dscleaner help | version
 ```
+
+## Development
+
+The codebase follows the [Google C++ Style Guide](https://google.github.io/styleguide/cppguide.html),
+enforced by the checked-in `.clang-format` and `.clang-tidy` configurations.
+
+```bash
+make format     # auto-format all sources (clang-format, Google style)
+make lint       # static analysis (clang-tidy baseline)
+```
+
+### Layout
+
+| Path                     | Responsibility                                         |
+|--------------------------|--------------------------------------------------------|
+| `include/junk.hpp`       | Single source of truth for what counts as macOS junk.  |
+| `include/proc.hpp`       | Minimal POSIX process runner (no shell injection).     |
+| `src/fileManager/`       | Directory scanning and removal helpers.                |
+| `src/cleaner/`           | `Cleaner` — removes junk under a path.                  |
+| `src/copier/`            | `Copier` — junk-aware `cp` / `scp` / `pack`.            |
+| `src/watcher/`           | `Watcher` — FSEvents (macOS) / polling auto-cleaner.    |
+| `src/service/`           | `Service` — launchd install / uninstall.               |
+| `src/main.cpp`           | CLI dispatch (backwards compatible with v1).           |
 
 ## A Note on macOS Permissions
 

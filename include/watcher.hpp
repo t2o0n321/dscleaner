@@ -8,22 +8,22 @@
 // code still builds and runs (e.g. in CI). Either way: when junk appears under
 // a watched path it is removed automatically.
 class Watcher {
-public:
-    Watcher(std::vector<fs::path> paths, bool recursive, bool verbose);
+ public:
+  Watcher(std::vector<fs::path> paths, bool recursive, bool verbose);
 
-    // Blocks, watching until requestStop() is called (typically from a signal
-    // handler).
-    void run();
+  // Blocks, watching until RequestStop() is called (typically from a signal
+  // handler).
+  void Run();
 
-    // Sweep a single directory (the one an event fired on) for junk.
-    void cleanPath(const fs::path& path);
+  // Sweeps a single directory (the one an event fired on) for junk.
+  void CleanPath(const fs::path& path);
 
-    // Ask a running watcher to stop. Safe to call from a signal handler.
-    static void requestStop();
+  // Asks a running watcher to stop. Safe to call from a signal handler.
+  static void RequestStop();
 
-private:
-    std::vector<fs::path> paths_;
-    bool recursive_;
-    bool verbose_;
-    Cleaner cleaner_;
+ private:
+  std::vector<fs::path> paths_;
+  bool recursive_;
+  bool verbose_;
+  Cleaner cleaner_;
 };
