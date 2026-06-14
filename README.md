@@ -1,13 +1,25 @@
 # dscleaner
 
-A simple and efficient command-line tool for removing `.DS_Store` files from your macOS system.
+A simple and efficient command-line tool for removing macOS junk files
+(`.DS_Store`, `._*` AppleDouble side-cars, `.Spotlight-V100`, `.Trashes`,
+`.fseventsd`, and friends) — and for keeping them off your USB drives, archives
+and remote servers in the first place.
 
 ## Features
 
-- **Targeted Cleaning**: Clean the current directory or a specific directory you provide.
-- **Flexible Search**: Choose between recursive (default) and non-recursive cleaning.
-- **Optimized**: Compiled for a small footprint and stripped of symbols to make it lightweight.
-- **Resilient**: Gracefully handles macOS file permission errors by skipping inaccessible directories.
+- **Comprehensive junk detection**: Removes `.DS_Store`, the `._*` AppleDouble
+  files that leak onto USB drives, plus `.Spotlight-V100`, `.Trashes`,
+  `.fseventsd`, `.TemporaryItems`, `.DocumentRevisions-V100`, `.apdisk`,
+  `.VolumeIcon.icns` and more (files *and* directories).
+- **Junk-aware copying**: `cp`, `scp` and `pack` exclude junk *during* the
+  operation and verify the destination is clean before reporting completion.
+- **Background service**: Register dscleaner as a launchd service that watches
+  your volumes (via native **FSEvents**) and auto-removes junk the moment it
+  appears.
+- **Flexible Search**: Choose between recursive (default) and non-recursive
+  cleaning.
+- **Optimized**: Compiled for a small footprint and stripped of symbols.
+- **Resilient**: Gracefully skips inaccessible directories instead of aborting.
 
 ## Prerequisites
 
@@ -57,6 +69,73 @@ Use the `-n` or `--no-recursive` flag to clean *only* the specified directory an
 # Clean ONLY a specific directory
 ./bin/dscleaner /path/to/your/folder -n
 ./bin/dscleaner /path/to/your/folder --no-recursive
+```
+
+## Junk-free copying
+
+The real fix for "macOS keeps writing `._` files onto my USB stick" is to never
+let the junk reach the destination. These subcommands exclude junk *during* the
+operation and report completion only after the destination is verified clean.
+
+### Local copy
+
+```bash
+# Copy a folder, skipping junk; the destination is swept clean afterwards.
+dscleaner cp ~/project /Volumes/USB
+```
+
+### Remote transfer (scp/rsync)
+
+Uses `rsync -e ssh` with excludes when available (so junk never crosses the
+wire), falling back to `scp -r` with a warning if `rsync` is not installed.
+
+```bash
+dscleaner scp ~/project server:/srv/app
+```
+
+### Archiving (tar / zip)
+
+The archive format is chosen by the output extension: `.tar`, `.tar.gz`/`.tgz`,
+`.tar.bz2`, `.tar.xz`, `.zip`.
+
+```bash
+dscleaner pack backup.tar.gz ~/project     # tarball without .DS_Store / ._*
+dscleaner pack release.zip ~/project        # zip without macOS junk
+```
+
+## Background service (auto-clean)
+
+Watch one or more paths and automatically remove macOS junk as it appears. On
+macOS this uses native FSEvents; elsewhere it falls back to polling.
+
+```bash
+# Run in the foreground (Ctrl-C to stop)
+dscleaner watch /Volumes/USB
+
+# Register as a launchd service that watches all mounted volumes.
+# Defaults to /Volumes when no path is given.
+dscleaner install-service /Volumes
+
+# Stop and remove the service
+dscleaner uninstall-service
+```
+
+The service installs a per-user launchd agent at
+`~/Library/LaunchAgents/com.t2o0n321.dscleaner.plist` and logs to
+`/tmp/com.t2o0n321.dscleaner.{out,err}.log`.
+
+## All commands
+
+```text
+dscleaner [path] [-n|--no-recursive]      Clean a directory (default: .)
+dscleaner clean [path] [-n]               Explicit clean form
+dscleaner cp <src> <dst>                  Copy, excluding junk; sweep dst clean
+dscleaner scp <src...> <[user@]host:dst>  Transfer (rsync/scp) without junk
+dscleaner pack <archive> <src...>         Archive (tar*/zip) excluding junk
+dscleaner watch [path...]                 Watch path(s) and auto-clean junk
+dscleaner install-service [path...]       Register background service (launchd)
+dscleaner uninstall-service               Remove the background service
+dscleaner help | version
 ```
 
 ## A Note on macOS Permissions
