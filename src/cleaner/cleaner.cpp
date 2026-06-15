@@ -25,11 +25,10 @@ int Cleaner::Clean(const fs::path& target_dir, bool recursive, bool verbose) {
 
   int count = 0;
   for (const auto& entry : junk_paths) {
-    // A junk directory may already have been removed as part of an earlier junk
-    // parent (entries are discovered parent-first); skip if it is gone.
-    if (!FileManager::Exists(entry)) {
-      continue;
-    }
+    // No existence pre-check here: fs::remove_all() treats a missing path as a
+    // no-op (returns 0, no error), so a junk child already removed as part of a
+    // junk parent simply yields 0. Dropping the check saves one stat(2) per
+    // junk item - the workload is I/O-bound, so fewer syscalls is the real win.
     if (FileManager::RemovePath(entry) > 0) {
       if (verbose) {
         std::cout << "Removed: " << entry.string() << std::endl;
