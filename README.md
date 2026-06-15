@@ -131,11 +131,12 @@ notification reporting how many items were cleaned.
 **Inserting a drive auto-starts watching it.** When a watched path is a *mount
 root* (`/Volumes` by default on macOS), the watcher detects volumes mounting and
 unmounting: plugging in a USB stick immediately sweeps it and adds it to the live
-watch set, and unplugging it drops it again. FSEvents is per-volume, so this is
-required to see *inside* a freshly mounted drive — watching `/Volumes` alone
-cannot. The boot volume is never swept. Extra mount roots (e.g. Linux's
-`/media`) can be added with the `DSCLEANER_MOUNT_ROOTS` environment variable
-(colon-separated).
+watch set, and unplugging it drops it again. On macOS this is **event-driven via
+DiskArbitration** — insertion is detected with zero latency, no polling.
+FSEvents is per-volume, so adding the new volume is required to see *inside* a
+freshly mounted drive — watching `/Volumes` alone cannot. The boot volume is
+never swept. Extra mount roots (e.g. Linux's `/media`) can be added with the
+`DSCLEANER_MOUNT_ROOTS` environment variable (colon-separated).
 
 ```bash
 # Run in the foreground (Ctrl-C to stop)
@@ -209,8 +210,9 @@ dscleaner is built to stay light even while sweeping large volumes:
 - **Bounded memory.** Each directory's entries are snapshotted before deletion
   (so the directory is never mutated mid-iteration); memory stays proportional
   to a single directory's width, not to the whole tree.
-- **Idle cost ≈ 0 on macOS.** The watcher uses event-driven FSEvents, so a
-  running service consumes no CPU until a file actually changes. A burst of
+- **Idle cost ≈ 0 on macOS.** The watcher is fully event-driven: FSEvents for
+  file changes and DiskArbitration for drive mount/unmount, so a running service
+  consumes no CPU until something actually happens — no polling. A burst of
   events (e.g. one large drag-and-drop) is de-duplicated by directory, so each
   affected folder is swept once instead of once per file.
 - **Symlink-safe.** Symlinks inside the tree are never followed

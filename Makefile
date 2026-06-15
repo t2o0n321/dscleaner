@@ -3,11 +3,12 @@ CXXFLAGS = -std=c++17 -Iinclude -Os -ffunction-sections -fdata-sections -MMD -MP
 BINNAME = dscleaner
 
 # Platform-specific linker flags:
-#   - macOS (Apple ld64): -dead_strip + CoreServices for FSEvents.
+#   - macOS (Apple ld64): -dead_strip + CoreServices (FSEvents) and
+#     DiskArbitration (hardware mount/unmount events).
 #   - Linux/others (GNU ld): --gc-sections.
 UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S),Darwin)
-	LDFLAGS = -s -Wl,-dead_strip -framework CoreServices
+	LDFLAGS = -s -Wl,-dead_strip -framework CoreServices -framework DiskArbitration
 else
 	LDFLAGS = -s -Wl,--gc-sections
 endif

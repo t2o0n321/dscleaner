@@ -53,11 +53,13 @@ std::set<std::string> MountRootSet() {
 
 #ifdef __APPLE__
 #include <CoreServices/CoreServices.h>
+#include <DiskArbitration/DiskArbitration.h>
 
 namespace {
 
 CFRunLoopRef g_run_loop = nullptr;
 FSEventStreamRef g_stream = nullptr;
+DASessionRef g_da_session = nullptr;
 
 void FsEventsCallback(ConstFSEventStreamRef /*stream*/, void* client_info, size_t num_events,
                       void* event_paths, const FSEventStreamEventFlags* /*flags*/,
@@ -98,10 +100,50 @@ void StopStreamNow() {
   }
 }
 
-// Periodic reconcile: cheap re-listing of the mount roots to pick up volumes
-// that mounted/unmounted (FSEvents does not deliver hardware mount events).
-void ReconcileTimerCallback(CFRunLoopTimerRef /*timer*/, void* info) {
+// DiskArbitration delivers hardware mount/unmount events with no polling. All
+// three callbacks funnel into Reconcile(), which re-lists the mount roots,
+// sweeps any newly mounted volume and rebuilds the FSEvents stream. Reconcile()
+// is idempotent and cheap, so reacting to every event is fine.
+void DiskAppearedCallback(DADiskRef /*disk*/, void* info) {
   static_cast<Watcher*>(info)->Reconcile();
+}
+
+void DiskDisappearedCallback(DADiskRef /*disk*/, void* info) {
+  static_cast<Watcher*>(info)->Reconcile();
+}
+
+// Fires when a disk's mount path is set or cleared - the precise "mounted at
+// /Volumes/X" / "unmounted" signal.
+void DiskDescriptionChangedCallback(DADiskRef /*disk*/, CFArrayRef /*keys*/, void* info) {
+  static_cast<Watcher*>(info)->Reconcile();
+}
+
+// Registers a DiskArbitration session on the run loop so mount/unmount events
+// trigger Reconcile() instantly (no timer / polling).
+void StartDiskArbitration(Watcher* self) {
+  g_da_session = DASessionCreate(kCFAllocatorDefault);
+  if (g_da_session == nullptr) {
+    return;
+  }
+  DARegisterDiskAppearedCallback(g_da_session, nullptr, &DiskAppearedCallback, self);
+  DARegisterDiskDisappearedCallback(g_da_session, nullptr, &DiskDisappearedCallback, self);
+
+  // Watch the volume-path key so we hear about mounts and unmounts specifically.
+  const void* keys[] = {kDADiskDescriptionVolumePathKey};
+  CFArrayRef watch = CFArrayCreate(nullptr, keys, 1, &kCFTypeArrayCallBacks);
+  DARegisterDiskDescriptionChangedCallback(g_da_session, nullptr, watch,
+                                           &DiskDescriptionChangedCallback, self);
+  CFRelease(watch);
+
+  DASessionScheduleWithRunLoop(g_da_session, g_run_loop, kCFRunLoopDefaultMode);
+}
+
+void StopDiskArbitration() {
+  if (g_da_session != nullptr) {
+    DASessionUnscheduleFromRunLoop(g_da_session, g_run_loop, kCFRunLoopDefaultMode);
+    CFRelease(g_da_session);
+    g_da_session = nullptr;
+  }
 }
 
 }  // namespace
@@ -258,22 +300,18 @@ void Watcher::Run() {
   g_run_loop = CFRunLoopGetCurrent();
   StartStreamFor(this, ActivePaths());
 
-  // A light timer re-checks the mount roots so inserting/removing a drive is
-  // picked up (FSEvents does not deliver hardware mount events).
-  CFRunLoopTimerContext timer_ctx{0, this, nullptr, nullptr, nullptr};
-  CFRunLoopTimerRef timer =
-      CFRunLoopTimerCreate(nullptr, CFAbsoluteTimeGetCurrent() + 2.0, /*interval=*/2.0, 0, 0,
-                           &ReconcileTimerCallback, &timer_ctx);
-  CFRunLoopAddTimer(g_run_loop, timer, kCFRunLoopDefaultMode);
+  // Event-driven mount detection: DiskArbitration notifies us the instant a
+  // drive is inserted or removed (no polling). Each event triggers Reconcile().
+  StartDiskArbitration(this);
 
   std::cout << "[watch] monitoring " << ActivePaths().size()
-            << " path(s) via FSEvents (auto-watching mounted volumes). Press Ctrl-C to stop."
+            << " path(s) via FSEvents + DiskArbitration (drives auto-watched on insert). "
+               "Press Ctrl-C to stop."
             << std::endl;
 
   CFRunLoopRun();
 
-  CFRunLoopTimerInvalidate(timer);
-  CFRelease(timer);
+  StopDiskArbitration();
   StopStreamNow();
 #else
   std::cout << "[watch] monitoring via polling (every 2s, auto-watching mounted volumes). "

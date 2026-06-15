@@ -31,6 +31,12 @@ class Watcher {
   // one per file. `paths` is the C array FSEvents hands the callback.
   void OnEventBatch(const char* const* paths, std::size_t count);
 
+  // Detects volumes mounting/unmounting under the mount roots. Newly mounted
+  // volumes are swept immediately; on a change the active set is updated and the
+  // FSEvents stream is rebuilt (no-op on non-macOS). Returns true if it changed.
+  // Public because the macOS DiskArbitration callbacks invoke it directly.
+  bool Reconcile();
+
   // Asks a running watcher to stop. Safe to call from a signal handler.
   static void RequestStop();
 
@@ -50,11 +56,6 @@ class Watcher {
   // direct paths + mount roots + currently-mounted volumes: everything to watch
   // right now.
   std::vector<fs::path> ActivePaths() const;
-
-  // Detects volumes mounting/unmounting under the mount roots. Newly mounted
-  // volumes are swept immediately; on a change the active set is updated and the
-  // FSEvents stream is rebuilt (no-op on non-macOS). Returns true if it changed.
-  bool Reconcile();
 
   // Rebuilds the FSEvents stream for the current ActivePaths() (macOS only).
   void RestartStream();
