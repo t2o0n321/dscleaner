@@ -1,5 +1,10 @@
-# Object files
+# C++ core build artifacts (Makefile creates these under core/)
 obj/
-
-# Binaries
 bin/
+
+# Swift / Xcode (gui/)
+.build/
+.swiftpm/
+DerivedData/
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/

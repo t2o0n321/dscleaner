@@ -10,8 +10,8 @@ class Dscleaner < Formula
   license "MIT"
 
   def install
-    system "make"
-    bin.install "bin/dscleaner"
+    system "make", "-C", "core"
+    bin.install "core/bin/dscleaner"
     # Short alias: `dc`.
     bin.install_symlink "dscleaner" => "dc"
   end

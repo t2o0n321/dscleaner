@@ -41,12 +41,30 @@ brew install dscleaner
 ### Build from Source
 
 ```bash
-make            # builds ./bin/dscleaner
+make            # builds the CLI -> core/bin/dscleaner
 make clean      # removes build artifacts
 ```
 
-On macOS the build links `CoreServices` for native FSEvents; on Linux it falls
-back to a portable polling watcher.
+On macOS the build links `CoreServices` (FSEvents) and `DiskArbitration`
+(hardware mount events); on Linux it falls back to a portable polling watcher.
+
+### Menu bar app (macOS)
+
+A native SwiftUI **menu bar** app lives in [`gui/`](gui/) — view status, toggle
+automatic drive-cleaning, edit watched locations, and run one-off cleans without
+the terminal (macOS 13+). It is a thin front-end that drives the same CLI. See
+[`gui/README.md`](gui/README.md).
+
+```bash
+make gui        # builds gui/ with the Swift toolchain (macOS 13+)
+```
+
+### Repository layout
+
+```
+core/   C++17 engine + `dscleaner` CLI (this is what `make` builds)
+gui/    SwiftUI menu bar app (calls the CLI; macOS 13+)
+```
 
 ## Usage
 
@@ -177,6 +195,7 @@ dscleaner pack <archive> <src...>         Archive (tar*/zip) excluding junk
 dscleaner watch [path...]                 Watch path(s) and auto-clean junk
 dscleaner install-service [path...]       Register background service (launchd)
 dscleaner uninstall-service               Remove the background service
+dscleaner status [--json]                 Show service status (the GUI reads --json)
 dscleaner help | version
 ```
 
@@ -224,16 +243,17 @@ Reference: sweeping a 66,600-entry tree (10% junk) removes all junk in ~70 ms
 
 ### Layout
 
-| Path                     | Responsibility                                         |
-|--------------------------|--------------------------------------------------------|
-| `include/junk.hpp`       | Single source of truth for what counts as macOS junk.  |
-| `include/proc.hpp`       | Minimal POSIX process runner (no shell injection).     |
-| `src/fileManager/`       | Directory scanning and removal helpers.                |
-| `src/cleaner/`           | `Cleaner` — removes junk under a path.                  |
-| `src/copier/`            | `Copier` — junk-aware `cp` / `scp` / `pack`.            |
-| `src/watcher/`           | `Watcher` — FSEvents (macOS) / polling auto-cleaner.    |
-| `src/service/`           | `Service` — launchd install / uninstall.               |
-| `src/main.cpp`           | CLI dispatch (backwards compatible with v1).           |
+| Path                          | Responsibility                                    |
+|-------------------------------|---------------------------------------------------|
+| `core/include/junk.hpp`       | Single source of truth for what counts as junk.   |
+| `core/include/proc.hpp`       | Minimal POSIX process runner (no shell injection).|
+| `core/src/fileManager/`       | std::filesystem helpers for CLI validation.       |
+| `core/src/cleaner/`           | `Cleaner` — POSIX engine that removes junk.        |
+| `core/src/copier/`            | `Copier` — junk-aware `cp` / `scp` / `pack`.       |
+| `core/src/watcher/`           | `Watcher` — FSEvents + DiskArbitration / polling.  |
+| `core/src/service/`           | `Service` — launchd install / uninstall / status. |
+| `core/src/main.cpp`           | CLI dispatch (backwards compatible with v1).      |
+| `gui/`                        | SwiftUI menu bar app (drives the CLI; macOS 13+). |
 
 ## A Note on macOS Permissions
 

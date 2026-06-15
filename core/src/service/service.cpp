@@ -2,6 +2,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <proc.hpp>
 #include <service.hpp>
 
@@ -74,6 +75,48 @@ std::string XmlEscape(const std::string& in) {
     }
   }
   return out;
+}
+
+std::string OutLogPath() { return std::string("/tmp/") + kLabel + ".out.log"; }
+std::string ErrLogPath() { return std::string("/tmp/") + kLabel + ".err.log"; }
+
+// Extracts the watch paths from a plist we previously wrote. ProgramArguments is
+// [exe, "watch", path...], so we collect the <string> values inside that array
+// and drop everything up to and including the "watch" marker. This keeps the
+// launchd plist as the single source of truth (no separate config file).
+std::vector<std::string> ParseWatchPaths(const fs::path& plist) {
+  std::vector<std::string> result;
+  std::ifstream in(plist);
+  if (!in) {
+    return result;
+  }
+  const std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+
+  const std::size_t pos = content.find("<key>ProgramArguments</key>");
+  if (pos == std::string::npos) {
+    return result;
+  }
+  const std::size_t array_end = content.find("</array>", pos);
+  const std::string open = "<string>";
+  const std::string close = "</string>";
+  bool seen_watch = false;
+  for (std::size_t s = content.find(open, pos);
+       s != std::string::npos && (array_end == std::string::npos || s < array_end);
+       s = content.find(open, s + 1)) {
+    const std::size_t value_start = s + open.size();
+    const std::size_t value_end = content.find(close, value_start);
+    if (value_end == std::string::npos) {
+      break;
+    }
+    const std::string value = content.substr(value_start, value_end - value_start);
+    if (seen_watch) {
+      result.push_back(value);
+    } else if (value == "watch") {
+      seen_watch = true;
+    }
+    s = value_end;
+  }
+  return result;
 }
 
 std::string BuildPlist(const fs::path& exe, const std::vector<std::string>& paths) {
@@ -175,4 +218,29 @@ int Service::Uninstall() {
     std::cout << "Service '" << kLabel << "' is not installed." << std::endl;
   }
   return 0;
+}
+
+ServiceStatus Service::Query() {
+  ServiceStatus status;
+  status.label = kLabel;
+  const fs::path plist = PlistPath();
+  status.plist = plist.string();
+  status.out_log = OutLogPath();
+  status.err_log = ErrLogPath();
+
+  std::error_code ec;
+  status.installed = fs::exists(plist, ec);
+  if (status.installed) {
+    status.watch_paths = ParseWatchPaths(plist);
+  }
+
+#ifdef __APPLE__
+  // `launchctl list <label>` exits 0 when the agent is loaded. Run it quietly.
+  status.running =
+      proc::Run({"sh", "-c", "launchctl list " + std::string(kLabel) + " >/dev/null 2>&1"}) == 0;
+#else
+  // No launchd elsewhere: treat "installed" as the best available signal.
+  status.running = status.installed;
+#endif
+  return status;
 }
