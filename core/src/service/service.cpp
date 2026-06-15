@@ -119,7 +119,8 @@ std::vector<std::string> ParseWatchPaths(const fs::path& plist) {
   return result;
 }
 
-std::string BuildPlist(const fs::path& exe, const std::vector<std::string>& paths) {
+std::string BuildPlist(const fs::path& exe, const std::vector<std::string>& paths,
+                       bool notifications) {
   std::string args = "    <string>" + XmlEscape(exe.string()) + "</string>\n";
   args += "    <string>watch</string>\n";
   for (const auto& path : paths) {
@@ -141,6 +142,15 @@ std::string BuildPlist(const fs::path& exe, const std::vector<std::string>& path
   plist += "  <array>\n";
   plist += args;
   plist += "  </array>\n";
+  if (!notifications) {
+    // Only emitted when disabling, so the default plist stays minimal. The
+    // watcher reads DSCLEANER_NOTIFICATIONS from its environment.
+    plist += "  <key>EnvironmentVariables</key>\n";
+    plist += "  <dict>\n";
+    plist += "    <key>DSCLEANER_NOTIFICATIONS</key>\n";
+    plist += "    <string>0</string>\n";
+    plist += "  </dict>\n";
+  }
   plist += "  <key>RunAtLoad</key>\n  <true/>\n";
   plist += "  <key>KeepAlive</key>\n  <true/>\n";
   plist += "  <key>StandardOutPath</key>\n";
@@ -154,7 +164,7 @@ std::string BuildPlist(const fs::path& exe, const std::vector<std::string>& path
 
 }  // namespace
 
-int Service::Install(const std::vector<std::string>& paths) {
+int Service::Install(const std::vector<std::string>& paths, bool notifications) {
   std::vector<std::string> const watch_paths = paths.empty() ? DefaultPaths() : paths;
   fs::path const exe = ExecutablePath();
   fs::path const plist = PlistPath();
@@ -167,7 +177,7 @@ int Service::Install(const std::vector<std::string>& paths) {
     std::cerr << "Error: cannot write plist to " << plist.string() << std::endl;
     return 1;
   }
-  out << BuildPlist(exe, watch_paths);
+  out << BuildPlist(exe, watch_paths, notifications);
   out.close();
   std::cout << "Wrote service definition: " << plist.string() << std::endl;
 
@@ -232,6 +242,11 @@ ServiceStatus Service::Query() {
   status.installed = fs::exists(plist, ec);
   if (status.installed) {
     status.watch_paths = ParseWatchPaths(plist);
+    // Notifications are on unless the plist disabled them.
+    std::ifstream in(plist);
+    const std::string content((std::istreambuf_iterator<char>(in)),
+                              std::istreambuf_iterator<char>());
+    status.notifications = content.find("DSCLEANER_NOTIFICATIONS") == std::string::npos;
   }
 
 #ifdef __APPLE__

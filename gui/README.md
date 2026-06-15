@@ -57,10 +57,28 @@ The app looks for `dscleaner` in this order:
 2. a `dscleaner` bundled in the app's `Resources`,
 3. `/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin` (Homebrew / system installs).
 
+## Settings
+
+The settings window (opened from the panel) offers:
+
+- **Launch dscleaner at login** — registers the app as a login item via
+  `SMAppService` (macOS 13+). Requires the app to be a signed bundle (see
+  packaging below); ad-hoc signing works for local use.
+- **Show notifications when junk is cleaned** — toggles the macOS notification.
+  Applied by reinstalling the service with `--no-notify`, which writes
+  `DSCLEANER_NOTIFICATIONS=0` into the launchd plist (read by the watcher).
+- **Background service** on/off and the **watched locations** list.
+
 ## Packaging a distributable `.app`
 
-`swift run` is enough for development. For a signed, double-clickable
-`DscleanerMenuBar.app` (with `LSUIElement` so it never shows in the Dock),
-wrap this package in an Xcode app target, or bundle the SwiftPM product and add
-an `Info.plist` with `LSUIElement = YES`. The CLI can be embedded by copying
-`../core/bin/dscleaner` into the app's `Resources` (resolver step 2 above).
+```bash
+./package.sh            # builds core + app, assembles dist/DscleanerMenuBar.app
+open dist/DscleanerMenuBar.app
+```
+
+`package.sh` builds the core and the SwiftUI app, assembles a `.app` bundle with
+an `Info.plist` (`LSUIElement = YES`, so no Dock icon), **embeds the `dscleaner`
+CLI** in `Contents/Resources` (so the app works with no separate install), and
+ad-hoc codesigns it. For real distribution replace the ad-hoc signature with a
+Developer ID and notarize. Login-item registration (`SMAppService`) needs a
+valid signature to persist across reboots.

@@ -73,6 +73,7 @@ int DoStatus(const std::vector<std::string>& args) {
               << "  \"service\": {\n"
               << "    \"installed\": " << (s.installed ? "true" : "false") << ",\n"
               << "    \"running\": " << (s.running ? "true" : "false") << ",\n"
+              << "    \"notifications\": " << (s.notifications ? "true" : "false") << ",\n"
               << "    \"label\": \"" << JsonEscape(s.label) << "\",\n"
               << "    \"plist\": \"" << JsonEscape(s.plist) << "\",\n"
               << "    \"logs\": { \"out\": \"" << JsonEscape(s.out_log) << "\", \"err\": \""
@@ -93,6 +94,7 @@ int DoStatus(const std::vector<std::string>& args) {
     }
     std::cout << "\n";
   }
+  std::cout << "Notify:     " << (s.notifications ? "on" : "off") << "\n";
   std::cout << "Logs:       " << s.out_log << " / " << s.err_log << std::endl;
   return 0;
 }
@@ -109,7 +111,7 @@ void PrintHelp() {
          "  dscleaner scp <src...> <[user@]host:dst>  Transfer (rsync/scp) without junk\n"
          "  dscleaner pack <archive> <src...>         Archive (tar*/zip/7z/rar) excl. junk\n"
          "  dscleaner watch [path...]                 Watch path(s); auto-watch mounts\n"
-         "  dscleaner install-service [path...]       Register background service (launchd)\n"
+         "  dscleaner install-service [--no-notify] [path...]   Register background service\n"
          "  dscleaner uninstall-service               Remove the background service\n"
          "  dscleaner status [--json]                 Show service status (GUI reads --json)\n"
          "  dscleaner help | version\n"
@@ -219,7 +221,17 @@ int main(int argc, char* argv[]) {
     return 0;
   }
   if (cmd == "install-service") {
-    return Service::Install(rest);
+    // Split off the --no-notify flag from the watch paths.
+    bool notifications = true;
+    std::vector<std::string> paths;
+    for (const auto& arg : rest) {
+      if (arg == "--no-notify") {
+        notifications = false;
+      } else {
+        paths.push_back(arg);
+      }
+    }
+    return Service::Install(paths, notifications);
   }
   if (cmd == "uninstall-service") {
     return Service::Uninstall();

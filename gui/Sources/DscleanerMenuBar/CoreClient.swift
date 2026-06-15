@@ -79,10 +79,11 @@ actor CoreClient {
         return try JSONDecoder().decode(CoreStatus.self, from: data)
     }
 
-    /// `dscleaner install-service <paths...>` (an empty list lets the core pick
-    /// its default, e.g. /Volumes).
-    func installService(paths: [String]) throws {
-        try run(["install-service"] + paths)
+    /// `dscleaner install-service [--no-notify] <paths...>` (an empty list lets
+    /// the core pick its default, e.g. /Volumes).
+    func installService(paths: [String], notifications: Bool) throws {
+        let flags = notifications ? [] : ["--no-notify"]
+        try run(["install-service"] + flags + paths)
     }
 
     /// `dscleaner uninstall-service`

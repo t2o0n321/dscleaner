@@ -65,6 +65,7 @@ class Watcher {
   std::vector<fs::path> volumes_;       // currently-mounted volumes (dynamic, sorted)
   bool recursive_;
   bool verbose_;
+  bool notifications_ = true;  // post macOS notifications (DSCLEANER_NOTIFICATIONS)
   Cleaner cleaner_;
   std::chrono::steady_clock::time_point last_notify_{};
   int pending_notify_ = 0;

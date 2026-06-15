@@ -15,6 +15,17 @@ namespace {
 
 std::atomic<bool> g_stop{false};
 
+// Notifications are on unless DSCLEANER_NOTIFICATIONS is set to a falsey value.
+// The service plist sets this variable, so the GUI's toggle controls it.
+bool NotificationsEnabledFromEnv() {
+  const char* env = std::getenv("DSCLEANER_NOTIFICATIONS");
+  if (env == nullptr) {
+    return true;
+  }
+  const std::string value(env);
+  return !(value == "0" || value == "false" || value == "no" || value == "off");
+}
+
 // Strips trailing slashes so "/Volumes/" and "/Volumes" compare equal.
 std::string NormalizeKey(const fs::path& path) {
   std::string key = path.string();
@@ -150,7 +161,7 @@ void StopDiskArbitration() {
 #endif  // __APPLE__
 
 Watcher::Watcher(std::vector<fs::path> paths, bool recursive, bool verbose)
-    : recursive_(recursive), verbose_(verbose) {
+    : recursive_(recursive), verbose_(verbose), notifications_(NotificationsEnabledFromEnv()) {
   // Split the requested paths into plain directories and mount roots (whose
   // child volumes are auto-watched).
   const std::set<std::string> mount_root_set = MountRootSet();
@@ -164,6 +175,9 @@ Watcher::Watcher(std::vector<fs::path> paths, bool recursive, bool verbose)
 }
 
 void Watcher::Notify(int count) {
+  if (!notifications_) {
+    return;
+  }
 #ifdef __APPLE__
   pending_notify_ += count;
   const auto now = std::chrono::steady_clock::now();

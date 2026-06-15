@@ -38,11 +38,13 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// Turns the background service on (with the given paths) or off.
+    /// Turns the background service on (keeping the current notification
+    /// preference) or off.
     func setServiceEnabled(_ enabled: Bool, paths: [String]) async {
+        let notifications = status.service.notifications
         await perform {
             if enabled {
-                try await self.client.installService(paths: paths)
+                try await self.client.installService(paths: paths, notifications: notifications)
             } else {
                 try await self.client.uninstallService()
             }
@@ -52,7 +54,19 @@ final class AppModel: ObservableObject {
     /// Re-applies the watch paths by reinstalling the service (only meaningful
     /// while the service is enabled).
     func applyWatchPaths(_ paths: [String]) async {
-        await perform { try await self.client.installService(paths: paths) }
+        let notifications = status.service.notifications
+        await perform {
+            try await self.client.installService(paths: paths, notifications: notifications)
+        }
+    }
+
+    /// Enables/disables desktop notifications by reinstalling the service with
+    /// the same watch paths.
+    func setNotifications(_ enabled: Bool) async {
+        let paths = status.watchPaths
+        await perform {
+            try await self.client.installService(paths: paths, notifications: enabled)
+        }
     }
 
     /// One-shot manual clean of a folder the user picked.

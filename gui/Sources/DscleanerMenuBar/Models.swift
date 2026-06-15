@@ -11,6 +11,7 @@ struct CoreStatus: Codable, Equatable {
 
         var installed: Bool
         var running: Bool
+        var notifications: Bool
         var label: String
         var plist: String
         var logs: Logs
@@ -26,6 +27,7 @@ struct CoreStatus: Codable, Equatable {
         service: .init(
             installed: false,
             running: false,
+            notifications: true,
             label: "com.t2o0n321.dscleaner",
             plist: "",
             logs: .init(out: "", err: "")

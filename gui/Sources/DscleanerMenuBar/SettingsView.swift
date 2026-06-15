@@ -7,9 +7,34 @@ struct SettingsView: View {
     @EnvironmentObject private var model: AppModel
     @State private var paths: [String] = []
     @State private var selection: String?
+    @State private var launchAtLogin = LoginItem.isEnabled
+    @State private var loginError: String?
 
     var body: some View {
         Form {
+            Section("General") {
+                Toggle("Launch dscleaner at login", isOn: $launchAtLogin)
+                    .onChange(of: launchAtLogin) { enabled in
+                        do {
+                            try LoginItem.setEnabled(enabled)
+                            loginError = nil
+                        } catch {
+                            loginError = error.localizedDescription
+                            launchAtLogin = LoginItem.isEnabled  // revert on failure
+                        }
+                    }
+
+                Toggle("Show notifications when junk is cleaned", isOn: Binding(
+                    get: { model.status.service.notifications },
+                    set: { enabled in Task { await model.setNotifications(enabled) } }
+                ))
+                .disabled(model.isBusy || !model.status.service.running)
+
+                if let loginError {
+                    Text(loginError).font(.caption).foregroundStyle(.red)
+                }
+            }
+
             Section("Background service") {
                 Toggle("Clean drives automatically on insert", isOn: Binding(
                     get: { model.status.service.running },

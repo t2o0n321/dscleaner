@@ -8,6 +8,7 @@
 struct ServiceStatus {
   bool installed = false;                // the launchd plist exists
   bool running = false;                  // launchctl reports the agent loaded (macOS)
+  bool notifications = true;             // desktop notifications enabled
   std::string label;                     // launchd label
   std::string plist;                     // plist path
   std::string out_log;                   // stdout log path
@@ -26,7 +27,9 @@ class Service {
  public:
   // `paths` are the directories to watch. If empty, a sensible default is
   // chosen (/Volumes on macOS so freshly-mounted USB drives are covered).
-  static int Install(const std::vector<std::string>& paths);
+  // `notifications` controls whether the running agent posts desktop
+  // notifications (persisted in the plist's EnvironmentVariables).
+  static int Install(const std::vector<std::string>& paths, bool notifications = true);
   static int Uninstall();
 
   // Returns the current service state for the `status` command / GUI.
