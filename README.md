@@ -90,6 +90,10 @@ operation and report completion only after the destination is verified clean.
 dscleaner cp ~/project /Volumes/USB
 ```
 
+The copy runs on the same direct-POSIX engine as the cleaner (see *Performance*
+below): junk is excluded as the tree is walked, symlinks are recreated as links
+(never followed), and file permissions are preserved.
+
 ### Remote transfer (scp/rsync)
 
 Uses `rsync -e ssh` with excludes when available (so junk never crosses the
@@ -180,12 +184,13 @@ make lint       # static analysis (clang-tidy baseline)
 
 dscleaner is built to stay light even while sweeping large volumes:
 
-- **Direct POSIX cleaning engine.** The throughput-critical cleaner is written
-  on raw POSIX (`fdopendir`/`readdir`/`openat`/`unlinkat`) rather than
-  `std::filesystem`. `dirent::d_type` classifies entries without a `stat(2)` in
-  the common case, the `*at()` calls work relative to a directory descriptor (no
-  full path is rebuilt per entry, no `PATH_MAX` limit), and no `fs::path`
-  objects are allocated while walking.
+- **Direct POSIX engine for cleaning and copying.** The throughput-critical
+  cleaner and `cp` are written on raw POSIX
+  (`fdopendir`/`readdir`/`openat`/`unlinkat`) rather than `std::filesystem`.
+  `dirent::d_type` classifies entries without a `stat(2)` in the common case,
+  the `*at()` calls work relative to a directory descriptor (no full path is
+  rebuilt per entry, no `PATH_MAX` limit), and no `fs::path` objects are
+  allocated while walking. File data is copied with `fcopyfile(3)` on macOS.
 - **Single-byte fast reject.** `junk::IsJunk` runs once per filesystem entry;
   because every macOS junk name starts with `.`, ordinary files are rejected in
   one byte comparison, with no heap allocation.

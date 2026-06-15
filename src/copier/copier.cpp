@@ -1,42 +1,176 @@
+#include <dirent.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
 #include <algorithm>
 #include <cctype>
 #include <cleaner.hpp>
+#include <climits>
 #include <copier.hpp>
 #include <cstdint>
 #include <iostream>
 #include <junk.hpp>
 #include <proc.hpp>
 
+#if defined(__APPLE__)
+#include <copyfile.h>
+#endif
+
 namespace {
 
-// Recursively copies `src` -> `dst`, skipping any junk entries. Counts copied
-// files and skipped junk items.
-void CopyRecursive(const fs::path& src, const fs::path& dst, std::uintmax_t& copied,
-                   std::uintmax_t& skipped, bool verbose) {
-  if (junk::IsJunk(FileManager::FileName(src))) {
-    skipped++;
-    if (verbose) {
-      std::cout << "Skipped junk: " << src.string() << std::endl;
+// --- POSIX file-copy primitives (the cp hot path) -------------------------
+//
+// Cp() walks the source tree with readdir + dirent::d_type (no per-entry stat,
+// no fs::path allocation) and copies through directory file descriptors using
+// the *at() calls, mirroring the cleaner's design. macOS copies file data with
+// fcopyfile(3); other platforms use a portable read/write loop. Symlinks are
+// recreated as links (never followed), matching `cp -R` and ensuring a copy can
+// never escape the source tree.
+
+enum class FileKind : std::uint8_t { kDir, kSymlink, kRegular };
+
+struct Child {
+  std::string name;
+  FileKind kind;
+};
+
+bool IsDotOrDotDot(const char* name) {
+  return name[0] == '.' && (name[1] == '\0' || (name[1] == '.' && name[2] == '\0'));
+}
+
+// Classifies an entry without following symlinks, preferring d_type to a stat.
+FileKind ClassifyEntry(int dir_fd, const struct dirent* entry) {
+#ifdef DT_DIR
+  if (entry->d_type == DT_DIR) return FileKind::kDir;
+  if (entry->d_type == DT_LNK) return FileKind::kSymlink;
+  if (entry->d_type != DT_UNKNOWN) return FileKind::kRegular;
+#endif
+  struct stat st;
+  if (fstatat(dir_fd, entry->d_name, &st, AT_SYMLINK_NOFOLLOW) != 0) return FileKind::kRegular;
+  if (S_ISDIR(st.st_mode)) return FileKind::kDir;
+  if (S_ISLNK(st.st_mode)) return FileKind::kSymlink;
+  return FileKind::kRegular;
+}
+
+// Copies the bytes of the open file `in` to the open file `out`.
+bool CopyData(int in, int out) {
+#if defined(__APPLE__)
+  // fcopyfile picks the most efficient mechanism the platform offers.
+  return fcopyfile(in, out, nullptr, COPYFILE_DATA) == 0;
+#else
+  char buffer[1 << 16];
+  ssize_t n = 0;
+  while ((n = read(in, buffer, sizeof(buffer))) > 0) {
+    ssize_t off = 0;
+    while (off < n) {
+      const ssize_t w = write(out, buffer + off, static_cast<std::size_t>(n - off));
+      if (w < 0) return false;
+      off += w;
     }
+  }
+  return n == 0;  // n < 0 indicates a read error
+#endif
+}
+
+// Copies a single regular file `name` between directory fds, preserving mode.
+bool CopyRegularFile(int src_dir_fd, int dst_dir_fd, const char* name) {
+  const int in = openat(src_dir_fd, name, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+  if (in < 0) return false;
+  struct stat st;
+  if (fstat(in, &st) != 0) {
+    close(in);
+    return false;
+  }
+  const int out =
+      openat(dst_dir_fd, name, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, st.st_mode & 0777);
+  if (out < 0) {
+    close(in);
+    return false;
+  }
+  const bool ok = CopyData(in, out);
+  fchmod(out, st.st_mode & 07777);  // restore bits the umask may have cleared
+  close(in);
+  close(out);
+  return ok;
+}
+
+// Recreates the symlink `name` (the link itself, not its target).
+bool CopySymlink(int src_dir_fd, int dst_dir_fd, const char* name) {
+  char target[PATH_MAX];
+  const ssize_t len = readlinkat(src_dir_fd, name, target, sizeof(target) - 1);
+  if (len < 0) return false;
+  target[len] = '\0';
+  unlinkat(dst_dir_fd, name, 0);  // replace any existing entry (best effort)
+  return symlinkat(target, dst_dir_fd, name) == 0;
+}
+
+struct CopyStats {
+  std::uintmax_t copied = 0;
+  std::uintmax_t skipped = 0;
+};
+
+// Copies the contents of the directory open at `src_fd` into the directory open
+// at `dst_fd`, skipping junk. Consumes (closes) both descriptors. `src_path` is
+// maintained only for verbose "skipped" messages.
+void CopyDirContents(int src_fd, int dst_fd, CopyStats& stats, bool verbose,
+                     std::string& src_path) {
+  DIR* dirp = fdopendir(src_fd);
+  if (dirp == nullptr) {
+    close(src_fd);
+    close(dst_fd);
     return;
   }
 
-  std::error_code ec;
-  if (fs::is_directory(src, ec)) {
-    fs::create_directories(dst, ec);
-    for (const auto& child :
-         fs::directory_iterator(src, fs::directory_options::skip_permission_denied, ec)) {
-      CopyRecursive(child.path(), dst / child.path().filename(), copied, skipped, verbose);
+  // Snapshot first (bounded to one directory's width), then act.
+  std::vector<Child> children;
+  const struct dirent* entry;
+  while ((entry = readdir(dirp)) != nullptr) {
+    if (IsDotOrDotDot(entry->d_name)) continue;
+    children.push_back({entry->d_name, ClassifyEntry(src_fd, entry)});
+  }
+
+  for (const auto& child : children) {
+    const char* name = child.name.c_str();
+    if (junk::IsJunk(name)) {
+      stats.skipped++;
+      if (verbose) {
+        std::cout << "Skipped junk: " << src_path << '/' << child.name << std::endl;
+      }
+      continue;
     }
-  } else {
-    fs::create_directories(dst.parent_path(), ec);
-    fs::copy_file(src, dst, fs::copy_options::overwrite_existing, ec);
-    if (ec) {
-      std::cerr << "Error copying " << src << ": " << ec.message() << std::endl;
-    } else {
-      copied++;
+    switch (child.kind) {
+      case FileKind::kDir: {
+        mkdirat(dst_fd, name, 0777);  // ignore EEXIST
+        const int cs = openat(src_fd, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+        const int cd = openat(dst_fd, name, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+        if (cs >= 0 && cd >= 0) {
+          const std::size_t base = src_path.size();
+          src_path += '/';
+          src_path += child.name;
+          CopyDirContents(cs, cd, stats, verbose, src_path);  // consumes cs, cd
+          src_path.resize(base);
+        } else {
+          if (cs >= 0) close(cs);
+          if (cd >= 0) close(cd);
+        }
+        break;
+      }
+      case FileKind::kSymlink:
+        if (CopySymlink(src_fd, dst_fd, name)) stats.copied++;
+        break;
+      case FileKind::kRegular:
+        if (CopyRegularFile(src_fd, dst_fd, name)) {
+          stats.copied++;
+        } else {
+          std::cerr << "Error copying " << src_path << '/' << child.name << std::endl;
+        }
+        break;
     }
   }
+
+  closedir(dirp);  // also closes src_fd
+  close(dst_fd);
 }
 
 std::string ToLower(std::string s) {
@@ -90,29 +224,72 @@ std::string FirstAvailable(const std::vector<std::string>& candidates) {
 }  // namespace
 
 int Copier::Cp(const fs::path& src, const fs::path& dst, bool verbose) {
-  std::error_code ec;
-  if (!fs::exists(src, ec)) {
+  struct stat src_st;
+  if (stat(src.c_str(), &src_st) != 0) {
     std::cerr << "Error: source does not exist: " << src.string() << std::endl;
     return 1;
   }
 
   // Mirror `cp` semantics: copying into an existing directory.
   fs::path real_dst = dst;
-  if (fs::is_directory(dst, ec)) {
+  struct stat dst_st;
+  if (stat(dst.c_str(), &dst_st) == 0 && S_ISDIR(dst_st.st_mode)) {
     real_dst = dst / src.filename();
   }
 
-  std::uintmax_t copied = 0;
-  std::uintmax_t skipped = 0;
-  CopyRecursive(src, real_dst, copied, skipped, verbose);
+  CopyStats stats;
+  if (S_ISDIR(src_st.st_mode)) {
+    mkdir(real_dst.c_str(), 0777);  // ignore EEXIST
+    const int src_fd = open(src.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    const int dst_fd = open(real_dst.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (src_fd < 0 || dst_fd < 0) {
+      std::cerr << "Error: cannot open " << (src_fd < 0 ? src.string() : real_dst.string())
+                << std::endl;
+      if (src_fd >= 0) close(src_fd);
+      if (dst_fd >= 0) close(dst_fd);
+      return 1;
+    }
+    std::string src_path = src.string();
+    while (src_path.size() > 1 && src_path.back() == '/') {
+      src_path.pop_back();
+    }
+    CopyDirContents(src_fd, dst_fd, stats, verbose, src_path);  // consumes both fds
+  } else {
+    // A single file (top-level): skip it if it is itself junk.
+    const std::string name = src.filename().string();
+    if (junk::IsJunk(name.c_str())) {
+      stats.skipped++;
+    } else {
+      std::error_code ec;
+      fs::create_directories(real_dst.parent_path(), ec);
+      const int in = open(src.c_str(), O_RDONLY | O_CLOEXEC);
+      const int out = (in < 0) ? -1
+                               : open(real_dst.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC,
+                                      src_st.st_mode & 0777);
+      if (in < 0 || out < 0) {
+        std::cerr << "Error copying " << src.string() << std::endl;
+        if (in >= 0) close(in);
+        return 1;
+      }
+      if (CopyData(in, out)) {
+        stats.copied++;
+      } else {
+        std::cerr << "Error copying " << src.string() << std::endl;
+      }
+      fchmod(out, src_st.st_mode & 07777);
+      close(in);
+      close(out);
+    }
+  }
 
-  // Belt-and-braces: sweep the copied destination for any junk that slipped in
-  // (e.g. pre-existing junk in the target directory).
+  // Belt-and-braces: sweep the destination for any junk (e.g. pre-existing junk
+  // in the target directory). Cheap now that the copy itself skipped junk.
   Cleaner cleaner;
-  fs::path const sweep_dir = fs::is_directory(real_dst, ec) ? real_dst : real_dst.parent_path();
-  int const cleaned = cleaner.Clean(sweep_dir, true, false);
+  std::error_code ec;
+  const fs::path sweep_dir = fs::is_directory(real_dst, ec) ? real_dst : real_dst.parent_path();
+  const int cleaned = cleaner.Clean(sweep_dir, true, false);
 
-  std::cout << "Copy complete: " << copied << " file(s) copied, " << skipped
+  std::cout << "Copy complete: " << stats.copied << " file(s) copied, " << stats.skipped
             << " junk item(s) skipped";
   if (cleaned > 0) {
     std::cout << ", " << cleaned << " junk item(s) cleaned at destination";
