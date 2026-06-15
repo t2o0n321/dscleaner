@@ -102,4 +102,25 @@ bool IsJunk(std::string_view filename) {
 
 const std::vector<std::string>& GlobPatterns() { return kGlobs; }
 
+bool IsJunk(const char* filename) {
+  // Same logic as the string_view overload, but a NUL-terminated C string lets
+  // us short-circuit without computing the length first.
+  //   - filename[0] != '.'  -> not junk (also handles the empty-string case,
+  //     where filename[0] is '\0').
+  //   - the asm primitive may safely read two bytes: a C string always has at
+  //     least its NUL terminator as the second byte.
+  if (filename[0] != '.') {
+    return false;
+  }
+  if (HasDotUnderscorePrefix(filename)) {
+    return true;
+  }
+  for (const auto& name : kExactNames) {
+    if (name == filename) {
+      return true;
+    }
+  }
+  return false;
+}
+
 }  // namespace junk

@@ -25,6 +25,11 @@ namespace junk {
 // allocation at the call site.
 bool IsJunk(std::string_view filename);
 
+// Overload for a NUL-terminated name (e.g. dirent::d_name straight from
+// readdir). Avoids computing the length up front - the comparisons short-circuit
+// on the first byte for the common "not junk" case.
+bool IsJunk(const char* filename);
+
 // Glob patterns suitable for passing to external tools such as
 // `tar --exclude=` and `rsync --exclude=`. These mirror IsJunk() but are
 // expressed as shell globs.

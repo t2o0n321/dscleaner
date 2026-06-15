@@ -180,25 +180,31 @@ make lint       # static analysis (clang-tidy baseline)
 
 dscleaner is built to stay light even while sweeping large volumes:
 
-- **Idle cost ≈ 0 on macOS.** The watcher uses event-driven FSEvents, so a
-  running service consumes no CPU until a file actually changes. (Non-macOS
-  builds fall back to lightweight polling.)
+- **Direct POSIX cleaning engine.** The throughput-critical cleaner is written
+  on raw POSIX (`fdopendir`/`readdir`/`openat`/`unlinkat`) rather than
+  `std::filesystem`. `dirent::d_type` classifies entries without a `stat(2)` in
+  the common case, the `*at()` calls work relative to a directory descriptor (no
+  full path is rebuilt per entry, no `PATH_MAX` limit), and no `fs::path`
+  objects are allocated while walking.
 - **Single-byte fast reject.** `junk::IsJunk` runs once per filesystem entry;
   because every macOS junk name starts with `.`, ordinary files are rejected in
-  one byte comparison. Filenames are compared as `std::string_view`, so the hot
-  path performs no heap allocation.
+  one byte comparison, with no heap allocation.
 - **Hand-written assembly for the hottest check.** The `._*` AppleDouble prefix
   test is implemented in inline assembly for **Apple Silicon (AArch64)** and
   **Intel (x86-64)**, with a portable C++ fallback for any other target.
-- **Streaming, bounded memory.** Cleaning streams the directory tree and retains
-  only the junk paths, so memory stays proportional to the junk found rather
-  than to the total file count.
-- **Batched event handling.** A burst of file events (e.g. one large
-  drag-and-drop) is de-duplicated by directory, so each affected folder is swept
-  once instead of once per file.
+- **Bounded memory.** Each directory's entries are snapshotted before deletion
+  (so the directory is never mutated mid-iteration); memory stays proportional
+  to a single directory's width, not to the whole tree.
+- **Idle cost ≈ 0 on macOS.** The watcher uses event-driven FSEvents, so a
+  running service consumes no CPU until a file actually changes. A burst of
+  events (e.g. one large drag-and-drop) is de-duplicated by directory, so each
+  affected folder is swept once instead of once per file.
+- **Symlink-safe.** Symlinks inside the tree are never followed
+  (`O_NOFOLLOW`), so cleaning can never escape the target or delete through a
+  link.
 
-Reference: a 66,600-entry tree (10% junk) is cleaned in ~85 ms; a re-scan of the
-already-clean tree takes ~33 ms.
+Reference: sweeping a 66,600-entry tree (10% junk) removes all junk in ~70 ms
+(per-entry `stat` eliminated); re-scanning the already-clean tree takes ~23 ms.
 
 ### Layout
 
