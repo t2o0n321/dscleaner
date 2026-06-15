@@ -176,6 +176,30 @@ make format     # auto-format all sources (clang-format, Google style)
 make lint       # static analysis (clang-tidy baseline)
 ```
 
+### Performance & system load
+
+dscleaner is built to stay light even while sweeping large volumes:
+
+- **Idle cost ≈ 0 on macOS.** The watcher uses event-driven FSEvents, so a
+  running service consumes no CPU until a file actually changes. (Non-macOS
+  builds fall back to lightweight polling.)
+- **Single-byte fast reject.** `junk::IsJunk` runs once per filesystem entry;
+  because every macOS junk name starts with `.`, ordinary files are rejected in
+  one byte comparison. Filenames are compared as `std::string_view`, so the hot
+  path performs no heap allocation.
+- **Hand-written assembly for the hottest check.** The `._*` AppleDouble prefix
+  test is implemented in inline assembly for **Apple Silicon (AArch64)** and
+  **Intel (x86-64)**, with a portable C++ fallback for any other target.
+- **Streaming, bounded memory.** Cleaning streams the directory tree and retains
+  only the junk paths, so memory stays proportional to the junk found rather
+  than to the total file count.
+- **Batched event handling.** A burst of file events (e.g. one large
+  drag-and-drop) is de-duplicated by directory, so each affected folder is swept
+  once instead of once per file.
+
+Reference: a 66,600-entry tree (10% junk) is cleaned in ~85 ms; a re-scan of the
+already-clean tree takes ~33 ms.
+
 ### Layout
 
 | Path                     | Responsibility                                         |

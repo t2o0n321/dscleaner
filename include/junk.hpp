@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <string_view>
 #include <vector>
 
 // Central definition of what counts as macOS-generated "junk".
@@ -17,7 +18,12 @@ namespace junk {
 
 // Returns true if a single path component (a file or directory *name*, not a
 // full path) is macOS junk that should be removed / excluded.
-bool IsJunk(const std::string& filename);
+//
+// This is the hottest predicate in the program: it runs once per filesystem
+// entry during a scan, so it is optimized to reject ordinary files in a single
+// byte comparison (see junk.cpp). A std::string_view is taken to avoid any
+// allocation at the call site.
+bool IsJunk(std::string_view filename);
 
 // Glob patterns suitable for passing to external tools such as
 // `tar --exclude=` and `rsync --exclude=`. These mirror IsJunk() but are

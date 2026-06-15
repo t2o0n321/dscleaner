@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <cleaner.hpp>
+#include <cstddef>
 #include <vector>
 
 // Background directory watcher. On macOS it uses native FSEvents for real-time
@@ -16,8 +17,11 @@ class Watcher {
   // handler).
   void Run();
 
-  // Sweeps a single directory (the one an event fired on) for junk.
-  void CleanPath(const fs::path& path);
+  // Handles one batch of FSEvents paths. The affected directories are
+  // de-duplicated so that a burst of file events in the same folder (e.g. one
+  // large drag-and-drop) triggers a single shallow sweep per folder rather than
+  // one per file. `paths` is the C array FSEvents hands the callback.
+  void OnEventBatch(const char* const* paths, std::size_t count);
 
   // Asks a running watcher to stop. Safe to call from a signal handler.
   static void RequestStop();

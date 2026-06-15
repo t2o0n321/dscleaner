@@ -4,6 +4,7 @@
 #include <proc.hpp>
 #include <string>
 #include <thread>
+#include <unordered_set>
 #include <utility>
 #include <watcher.hpp>
 
@@ -22,10 +23,8 @@ void FsEventsCallback(ConstFSEventStreamRef /*stream*/, void* client_info, size_
                       void* event_paths, const FSEventStreamEventFlags* /*flags*/,
                       const FSEventStreamEventId* /*ids*/) {
   auto* self = static_cast<Watcher*>(client_info);
-  auto** paths = static_cast<char**>(event_paths);
-  for (size_t i = 0; i < num_events; i++) {
-    self->CleanPath(fs::path(paths[i]));
-  }
+  // event_paths is a C array of NUL-terminated paths (default, non-CFTypes API).
+  self->OnEventBatch(static_cast<const char* const*>(event_paths), num_events);
 }
 
 }  // namespace
@@ -53,17 +52,34 @@ void Watcher::Notify(int count) {
 #endif
 }
 
-void Watcher::CleanPath(const fs::path& path) {
-  std::error_code ec;
-  // FSEvents may hand us either the changed file or its containing directory;
-  // normalise to a directory and do a shallow sweep of it.
-  fs::path const dir = fs::is_directory(path, ec) ? path : path.parent_path();
-  int const n = cleaner_.Clean(dir, false, false);
-  if (n > 0) {
-    if (verbose_) {
-      std::cout << "[watch] cleaned " << n << " junk item(s) in " << dir.string() << std::endl;
+void Watcher::OnEventBatch(const char* const* paths, std::size_t count) {
+  // De-duplicate the directories touched by this batch. FSEvents (with file
+  // events) reports one path per changed file, and a single drag-and-drop can
+  // change many files in the same folder; cleaning each unique folder once
+  // turns potential O(files^2) re-scanning into O(files).
+  std::unordered_set<std::string> dirs;
+  dirs.reserve(count);
+  for (std::size_t i = 0; i < count; i++) {
+    const fs::path path(paths[i]);
+    std::error_code ec;
+    // Normalise to a directory: the event path is usually the changed file, so
+    // we sweep its parent; if it is itself a directory, sweep that.
+    const fs::path dir = fs::is_directory(path, ec) ? path : path.parent_path();
+    dirs.insert(dir.string());
+  }
+
+  int total = 0;
+  for (const auto& dir : dirs) {
+    const int n = cleaner_.Clean(fs::path(dir), false, false);
+    if (n > 0) {
+      total += n;
+      if (verbose_) {
+        std::cout << "[watch] cleaned " << n << " junk item(s) in " << dir << std::endl;
+      }
     }
-    Notify(n);
+  }
+  if (total > 0) {
+    Notify(total);
   }
 }
 

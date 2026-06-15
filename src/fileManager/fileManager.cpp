@@ -1,52 +1,19 @@
 #include <fileManager.hpp>
 #include <iostream>
 
-namespace {
-
-// Collects entries from a directory iterator, skipping (and reporting) any
-// entry that cannot be accessed. Works for both directory_iterator and
-// recursive_directory_iterator.
-template <typename Iterator>
-void Collect(Iterator it, std::vector<fs::path>& entries) {
-  std::error_code ec;
-  const Iterator end;
-  while (it != end) {
-    entries.push_back(it->path());
-    it.increment(ec);
-    if (ec) {
-      std::cerr << "Skipping inaccessible entry: " << ec.message() << std::endl;
-      ec.clear();
-    }
+std::string_view FileManager::FileName(const fs::path& path) {
+  // Reference into the path's own storage - no copy (POSIX std::string native).
+  const std::string& native = path.native();
+  const std::size_t slash = native.find_last_of('/');
+  if (slash == std::string::npos) {
+    return native;
   }
-}
-
-}  // namespace
-
-std::vector<fs::path> FileManager::GetEntries(const fs::path& path, bool recursive) {
-  std::vector<fs::path> entries;
-  std::error_code ec;
-
-  if (recursive) {
-    fs::recursive_directory_iterator it(path, fs::directory_options::skip_permission_denied, ec);
-    if (ec) {
-      std::cerr << "Error accessing path " << path << ": " << ec.message() << std::endl;
-      return entries;
-    }
-    Collect(std::move(it), entries);
-  } else {
-    fs::directory_iterator it(path, fs::directory_options::skip_permission_denied, ec);
-    if (ec) {
-      std::cerr << "Error accessing path " << path << ": " << ec.message() << std::endl;
-      return entries;
-    }
-    Collect(std::move(it), entries);
-  }
-  return entries;
+  return std::string_view(native).substr(slash + 1);
 }
 
 std::uintmax_t FileManager::RemovePath(const fs::path& path) {
   std::error_code ec;
-  std::uintmax_t const removed = fs::remove_all(path, ec);
+  const std::uintmax_t removed = fs::remove_all(path, ec);
   if (ec) {
     std::cerr << "Error removing " << path << ": " << ec.message() << std::endl;
     return 0;

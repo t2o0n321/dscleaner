@@ -13,7 +13,7 @@ namespace {
 // files and skipped junk items.
 void CopyRecursive(const fs::path& src, const fs::path& dst, std::uintmax_t& copied,
                    std::uintmax_t& skipped, bool verbose) {
-  if (junk::IsJunk(src.filename().string())) {
+  if (junk::IsJunk(FileManager::FileName(src))) {
     skipped++;
     if (verbose) {
       std::cout << "Skipped junk: " << src.string() << std::endl;
