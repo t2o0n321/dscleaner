@@ -128,6 +128,15 @@ service watches your volumes, dragging a folder onto a USB drive triggers the
 junk (`.DS_Store`, `._*`) to be removed automatically, and macOS shows a
 notification reporting how many items were cleaned.
 
+**Inserting a drive auto-starts watching it.** When a watched path is a *mount
+root* (`/Volumes` by default on macOS), the watcher detects volumes mounting and
+unmounting: plugging in a USB stick immediately sweeps it and adds it to the live
+watch set, and unplugging it drops it again. FSEvents is per-volume, so this is
+required to see *inside* a freshly mounted drive — watching `/Volumes` alone
+cannot. The boot volume is never swept. Extra mount roots (e.g. Linux's
+`/media`) can be added with the `DSCLEANER_MOUNT_ROOTS` environment variable
+(colon-separated).
+
 ```bash
 # Run in the foreground (Ctrl-C to stop)
 dscleaner watch /Volumes/USB

@@ -1,7 +1,10 @@
+#include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstdlib>
 #include <iostream>
 #include <proc.hpp>
+#include <set>
 #include <string>
 #include <thread>
 #include <unordered_set>
@@ -9,7 +12,43 @@
 #include <watcher.hpp>
 
 namespace {
+
 std::atomic<bool> g_stop{false};
+
+// Strips trailing slashes so "/Volumes/" and "/Volumes" compare equal.
+std::string NormalizeKey(const fs::path& path) {
+  std::string key = path.string();
+  while (key.size() > 1 && key.back() == '/') {
+    key.pop_back();
+  }
+  return key;
+}
+
+// The set of paths whose child directories are treated as mounted volumes:
+// /Volumes on macOS, plus anything in DSCLEANER_MOUNT_ROOTS (colon-separated).
+std::set<std::string> MountRootSet() {
+  std::set<std::string> roots;
+#ifdef __APPLE__
+  roots.insert("/Volumes");
+#endif
+  if (const char* env = std::getenv("DSCLEANER_MOUNT_ROOTS")) {
+    const std::string value(env);
+    std::size_t start = 0;
+    while (start <= value.size()) {
+      const std::size_t colon = value.find(':', start);
+      const std::size_t end = (colon == std::string::npos) ? value.size() : colon;
+      if (end > start) {
+        roots.insert(NormalizeKey(value.substr(start, end - start)));
+      }
+      if (colon == std::string::npos) {
+        break;
+      }
+      start = colon + 1;
+    }
+  }
+  return roots;
+}
+
 }  // namespace
 
 #ifdef __APPLE__
@@ -18,6 +57,7 @@ std::atomic<bool> g_stop{false};
 namespace {
 
 CFRunLoopRef g_run_loop = nullptr;
+FSEventStreamRef g_stream = nullptr;
 
 void FsEventsCallback(ConstFSEventStreamRef /*stream*/, void* client_info, size_t num_events,
                       void* event_paths, const FSEventStreamEventFlags* /*flags*/,
@@ -27,11 +67,59 @@ void FsEventsCallback(ConstFSEventStreamRef /*stream*/, void* client_info, size_
   self->OnEventBatch(static_cast<const char* const*>(event_paths), num_events);
 }
 
+// Creates and starts an FSEvents stream over `paths`, owned by g_stream.
+void StartStreamFor(Watcher* self, const std::vector<fs::path>& paths) {
+  if (paths.empty()) {
+    return;
+  }
+  CFMutableArrayRef cf_paths =
+      CFArrayCreateMutable(nullptr, static_cast<CFIndex>(paths.size()), &kCFTypeArrayCallBacks);
+  for (const auto& path : paths) {
+    CFStringRef s =
+        CFStringCreateWithCString(nullptr, fs::absolute(path).c_str(), kCFStringEncodingUTF8);
+    CFArrayAppendValue(cf_paths, s);
+    CFRelease(s);
+  }
+  FSEventStreamContext ctx{0, self, nullptr, nullptr, nullptr};
+  g_stream = FSEventStreamCreate(
+      nullptr, &FsEventsCallback, &ctx, cf_paths, kFSEventStreamEventIdSinceNow,
+      /*latency=*/0.5, kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagNoDefer);
+  CFRelease(cf_paths);
+  FSEventStreamScheduleWithRunLoop(g_stream, g_run_loop, kCFRunLoopDefaultMode);
+  FSEventStreamStart(g_stream);
+}
+
+void StopStreamNow() {
+  if (g_stream != nullptr) {
+    FSEventStreamStop(g_stream);
+    FSEventStreamInvalidate(g_stream);
+    FSEventStreamRelease(g_stream);
+    g_stream = nullptr;
+  }
+}
+
+// Periodic reconcile: cheap re-listing of the mount roots to pick up volumes
+// that mounted/unmounted (FSEvents does not deliver hardware mount events).
+void ReconcileTimerCallback(CFRunLoopTimerRef /*timer*/, void* info) {
+  static_cast<Watcher*>(info)->Reconcile();
+}
+
 }  // namespace
-#endif
+#endif  // __APPLE__
 
 Watcher::Watcher(std::vector<fs::path> paths, bool recursive, bool verbose)
-    : paths_(std::move(paths)), recursive_(recursive), verbose_(verbose) {}
+    : recursive_(recursive), verbose_(verbose) {
+  // Split the requested paths into plain directories and mount roots (whose
+  // child volumes are auto-watched).
+  const std::set<std::string> mount_root_set = MountRootSet();
+  for (auto& path : paths) {
+    if (mount_root_set.count(NormalizeKey(path)) != 0) {
+      mount_roots_.push_back(std::move(path));
+    } else {
+      direct_paths_.push_back(std::move(path));
+    }
+  }
+}
 
 void Watcher::Notify(int count) {
 #ifdef __APPLE__
@@ -49,6 +137,82 @@ void Watcher::Notify(int count) {
       {"osascript", "-e", "display notification \"" + message + "\" with title \"dscleaner\""});
 #else
   (void)count;
+#endif
+}
+
+void Watcher::SweepOnce(const fs::path& path) {
+  const int n = cleaner_.Clean(path, recursive_, false);
+  if (n > 0) {
+    if (verbose_) {
+      std::cout << "[watch] cleaned " << n << " junk item(s) under " << path.string() << std::endl;
+    }
+    Notify(n);
+  }
+}
+
+std::vector<fs::path> Watcher::EnumerateVolumes() const {
+  std::vector<fs::path> volumes;
+  for (const auto& root : mount_roots_) {
+    std::error_code ec;
+    fs::directory_iterator it(root, fs::directory_options::skip_permission_denied, ec);
+    if (ec) {
+      continue;
+    }
+    const fs::directory_iterator end;
+    for (; it != end; it.increment(ec)) {
+      if (ec) {
+        break;
+      }
+      // Skip symlinks (the boot volume appears under /Volumes as a symlink to
+      // "/"); only real mounted volumes are directories.
+      if (it->is_symlink(ec) || !it->is_directory(ec)) {
+        continue;
+      }
+      // Belt-and-braces: never treat the root/boot volume as a removable volume,
+      // even if it is exposed under a mount root as a real directory.
+      std::error_code eq_ec;
+      if (fs::equivalent(it->path(), "/", eq_ec) && !eq_ec) {
+        continue;
+      }
+      volumes.push_back(it->path());
+    }
+  }
+  std::sort(volumes.begin(), volumes.end());
+  return volumes;
+}
+
+std::vector<fs::path> Watcher::ActivePaths() const {
+  std::vector<fs::path> active = direct_paths_;
+  active.insert(active.end(), mount_roots_.begin(), mount_roots_.end());
+  active.insert(active.end(), volumes_.begin(), volumes_.end());
+  return active;
+}
+
+bool Watcher::Reconcile() {
+  std::vector<fs::path> desired = EnumerateVolumes();
+  const bool changed = (desired != volumes_);
+
+  // Immediately sweep volumes that just appeared (a USB stick was inserted).
+  for (const auto& volume : desired) {
+    if (!std::binary_search(volumes_.begin(), volumes_.end(), volume)) {
+      if (verbose_) {
+        std::cout << "[watch] volume mounted: " << volume.string() << std::endl;
+      }
+      SweepOnce(volume);
+    }
+  }
+
+  if (changed) {
+    volumes_ = std::move(desired);
+    RestartStream();  // no-op on non-macOS
+  }
+  return changed;
+}
+
+void Watcher::RestartStream() {
+#ifdef __APPLE__
+  StopStreamNow();
+  StartStreamFor(this, ActivePaths());
 #endif
 }
 
@@ -84,59 +248,41 @@ void Watcher::OnEventBatch(const char* const* paths, std::size_t count) {
 }
 
 void Watcher::Run() {
-  // Initial sweep so anything already sitting on the volume is dealt with.
-  for (const auto& path : paths_) {
-    int const n = cleaner_.Clean(path, recursive_, false);
-    if (n > 0) {
-      if (verbose_) {
-        std::cout << "[watch] initial sweep removed " << n << " junk item(s) under "
-                  << path.string() << std::endl;
-      }
-      Notify(n);
-    }
+  // Seed the volume set and sweep everything once up front.
+  volumes_ = EnumerateVolumes();
+  for (const auto& path : ActivePaths()) {
+    SweepOnce(path);
   }
 
 #ifdef __APPLE__
-  CFMutableArrayRef cf_paths =
-      CFArrayCreateMutable(nullptr, static_cast<CFIndex>(paths_.size()), &kCFTypeArrayCallBacks);
-  for (const auto& path : paths_) {
-    CFStringRef s =
-        CFStringCreateWithCString(nullptr, fs::absolute(path).c_str(), kCFStringEncodingUTF8);
-    CFArrayAppendValue(cf_paths, s);
-    CFRelease(s);
-  }
-
-  FSEventStreamContext ctx{0, this, nullptr, nullptr, nullptr};
-  FSEventStreamRef stream = FSEventStreamCreate(
-      nullptr, &FsEventsCallback, &ctx, cf_paths, kFSEventStreamEventIdSinceNow,
-      /*latency=*/0.5, kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagNoDefer);
-  CFRelease(cf_paths);
-
   g_run_loop = CFRunLoopGetCurrent();
-  FSEventStreamScheduleWithRunLoop(stream, g_run_loop, kCFRunLoopDefaultMode);
-  FSEventStreamStart(stream);
+  StartStreamFor(this, ActivePaths());
 
-  std::cout << "[watch] monitoring " << paths_.size()
-            << " path(s) via FSEvents. Press Ctrl-C to stop." << std::endl;
+  // A light timer re-checks the mount roots so inserting/removing a drive is
+  // picked up (FSEvents does not deliver hardware mount events).
+  CFRunLoopTimerContext timer_ctx{0, this, nullptr, nullptr, nullptr};
+  CFRunLoopTimerRef timer =
+      CFRunLoopTimerCreate(nullptr, CFAbsoluteTimeGetCurrent() + 2.0, /*interval=*/2.0, 0, 0,
+                           &ReconcileTimerCallback, &timer_ctx);
+  CFRunLoopAddTimer(g_run_loop, timer, kCFRunLoopDefaultMode);
+
+  std::cout << "[watch] monitoring " << ActivePaths().size()
+            << " path(s) via FSEvents (auto-watching mounted volumes). Press Ctrl-C to stop."
+            << std::endl;
 
   CFRunLoopRun();
 
-  FSEventStreamStop(stream);
-  FSEventStreamInvalidate(stream);
-  FSEventStreamRelease(stream);
+  CFRunLoopTimerInvalidate(timer);
+  CFRelease(timer);
+  StopStreamNow();
 #else
-  std::cout << "[watch] monitoring " << paths_.size()
-            << " path(s) via polling (every 2s). Press Ctrl-C to stop." << std::endl;
+  std::cout << "[watch] monitoring via polling (every 2s, auto-watching mounted volumes). "
+               "Press Ctrl-C to stop."
+            << std::endl;
   while (!g_stop.load()) {
-    for (const auto& path : paths_) {
-      int const n = cleaner_.Clean(path, recursive_, false);
-      if (n > 0) {
-        if (verbose_) {
-          std::cout << "[watch] cleaned " << n << " junk item(s) under " << path.string()
-                    << std::endl;
-        }
-        Notify(n);
-      }
+    Reconcile();  // detect & sweep newly mounted volumes
+    for (const auto& path : ActivePaths()) {
+      SweepOnce(path);
     }
     // Sleep in small slices so Ctrl-C stays responsive.
     for (int i = 0; i < 20 && !g_stop.load(); i++) {
@@ -150,7 +296,7 @@ void Watcher::Run() {
 void Watcher::RequestStop() {
   g_stop.store(true);
 #ifdef __APPLE__
-  if (g_run_loop) {
+  if (g_run_loop != nullptr) {
     CFRunLoopStop(g_run_loop);
   }
 #endif

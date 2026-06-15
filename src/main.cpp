@@ -21,7 +21,7 @@ void PrintHelp() {
                "  dscleaner cp <src> <dst>                  Copy, excluding junk; sweep dst clean\n"
                "  dscleaner scp <src...> <[user@]host:dst>  Transfer (rsync/scp) without junk\n"
                "  dscleaner pack <archive> <src...>         Archive (tar*/zip/7z/rar) excl. junk\n"
-               "  dscleaner watch [path...]                 Watch path(s) and auto-clean junk\n"
+               "  dscleaner watch [path...]                 Watch path(s); auto-watch mounts\n"
                "  dscleaner install-service [path...]       Register background service (launchd)\n"
                "  dscleaner uninstall-service               Remove the background service\n"
                "  dscleaner help | version\n"
