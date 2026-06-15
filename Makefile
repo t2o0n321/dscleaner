@@ -27,6 +27,7 @@ all: $(EXECUTABLE)
 $(EXECUTABLE): $(OBJECTS)
 	@mkdir -p $(@D)
 	$(CXX) $(LDFLAGS) -o $@ $^
+	@ln -sf $(BINNAME) $(BINDIR)/dc   # short alias: `dc`
 
 $(OBJDIR)/%.o: $(SRCDIR)/%.cpp
 	@mkdir -p $(@D)

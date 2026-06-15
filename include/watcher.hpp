@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <cleaner.hpp>
 #include <vector>
 
@@ -22,8 +23,15 @@ class Watcher {
   static void RequestStop();
 
  private:
+  // Posts a throttled desktop notification (macOS only) reporting that `count`
+  // junk items were auto-cleaned. This is the drag-and-drop "completion report":
+  // a Finder copy onto a watched volume is cleaned silently otherwise.
+  void Notify(int count);
+
   std::vector<fs::path> paths_;
   bool recursive_;
   bool verbose_;
   Cleaner cleaner_;
+  std::chrono::steady_clock::time_point last_notify_{};
+  int pending_notify_ = 0;
 };

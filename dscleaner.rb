@@ -12,6 +12,8 @@ class Dscleaner < Formula
   def install
     system "make"
     bin.install "bin/dscleaner"
+    # Short alias: `dc`.
+    bin.install_symlink "dscleaner" => "dc"
   end
 
   test do

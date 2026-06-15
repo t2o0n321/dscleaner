@@ -1,6 +1,8 @@
 #include <atomic>
 #include <chrono>
 #include <iostream>
+#include <proc.hpp>
+#include <string>
 #include <thread>
 #include <utility>
 #include <watcher.hpp>
@@ -32,14 +34,36 @@ void FsEventsCallback(ConstFSEventStreamRef /*stream*/, void* client_info, size_
 Watcher::Watcher(std::vector<fs::path> paths, bool recursive, bool verbose)
     : paths_(std::move(paths)), recursive_(recursive), verbose_(verbose) {}
 
+void Watcher::Notify(int count) {
+#ifdef __APPLE__
+  pending_notify_ += count;
+  const auto now = std::chrono::steady_clock::now();
+  // Throttle so a burst of Finder events (e.g. one big drag-and-drop) produces
+  // a single notification rather than one per file.
+  if (now - last_notify_ < std::chrono::seconds(3)) {
+    return;
+  }
+  last_notify_ = now;
+  const std::string message = "Cleaned " + std::to_string(pending_notify_) + " macOS junk item(s)";
+  pending_notify_ = 0;
+  proc::Run(
+      {"osascript", "-e", "display notification \"" + message + "\" with title \"dscleaner\""});
+#else
+  (void)count;
+#endif
+}
+
 void Watcher::CleanPath(const fs::path& path) {
   std::error_code ec;
   // FSEvents may hand us either the changed file or its containing directory;
   // normalise to a directory and do a shallow sweep of it.
   fs::path const dir = fs::is_directory(path, ec) ? path : path.parent_path();
   int const n = cleaner_.Clean(dir, false, false);
-  if (n > 0 && verbose_) {
-    std::cout << "[watch] cleaned " << n << " junk item(s) in " << dir.string() << std::endl;
+  if (n > 0) {
+    if (verbose_) {
+      std::cout << "[watch] cleaned " << n << " junk item(s) in " << dir.string() << std::endl;
+    }
+    Notify(n);
   }
 }
 
@@ -47,9 +71,12 @@ void Watcher::Run() {
   // Initial sweep so anything already sitting on the volume is dealt with.
   for (const auto& path : paths_) {
     int const n = cleaner_.Clean(path, recursive_, false);
-    if (n > 0 && verbose_) {
-      std::cout << "[watch] initial sweep removed " << n << " junk item(s) under " << path.string()
-                << std::endl;
+    if (n > 0) {
+      if (verbose_) {
+        std::cout << "[watch] initial sweep removed " << n << " junk item(s) under "
+                  << path.string() << std::endl;
+      }
+      Notify(n);
     }
   }
 
@@ -87,9 +114,12 @@ void Watcher::Run() {
   while (!g_stop.load()) {
     for (const auto& path : paths_) {
       int const n = cleaner_.Clean(path, recursive_, false);
-      if (n > 0 && verbose_) {
-        std::cout << "[watch] cleaned " << n << " junk item(s) under " << path.string()
-                  << std::endl;
+      if (n > 0) {
+        if (verbose_) {
+          std::cout << "[watch] cleaned " << n << " junk item(s) under " << path.string()
+                    << std::endl;
+        }
+        Notify(n);
       }
     }
     // Sleep in small slices so Ctrl-C stays responsive.

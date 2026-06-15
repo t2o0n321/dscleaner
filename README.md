@@ -102,17 +102,27 @@ dscleaner scp ~/project server:/srv/app
 ### Archiving (tar / zip)
 
 The archive format is chosen by the output extension: `.tar`, `.tar.gz`/`.tgz`,
-`.tar.bz2`, `.tar.xz`, `.zip`.
+`.tar.bz2`, `.tar.xz`, `.tar.zst`, `.zip`, `.7z`, `.rar`. Each format uses the
+corresponding tool (`tar`, `zip`, `7z`/`7za`/`7zz`/`7zr`, `rar`), which must be
+installed; for `.rar` you need WinRAR's `rar` (the free `unrar` cannot create
+archives).
 
 ```bash
-dscleaner pack backup.tar.gz ~/project     # tarball without .DS_Store / ._*
+dscleaner pack backup.tar.gz ~/project      # tarball without .DS_Store / ._*
 dscleaner pack release.zip ~/project        # zip without macOS junk
+dscleaner pack release.7z ~/project         # 7-Zip without macOS junk
+dscleaner pack backup.rar ~/project         # RAR without macOS junk
 ```
 
-## Background service (auto-clean)
+## Background service (auto-clean, incl. drag-and-drop)
 
 Watch one or more paths and automatically remove macOS junk as it appears. On
 macOS this uses native FSEvents; elsewhere it falls back to polling.
+
+This is what makes **Finder drag-and-drop** work without any command: once the
+service watches your volumes, dragging a folder onto a USB drive triggers the
+junk (`.DS_Store`, `._*`) to be removed automatically, and macOS shows a
+notification reporting how many items were cleaned.
 
 ```bash
 # Run in the foreground (Ctrl-C to stop)
@@ -129,6 +139,18 @@ dscleaner uninstall-service
 The service installs a per-user launchd agent at
 `~/Library/LaunchAgents/com.t2o0n321.dscleaner.plist` and logs to
 `/tmp/com.t2o0n321.dscleaner.{out,err}.log`.
+
+## Short alias: `dc`
+
+Every command is also available under the shorter name **`dc`** (installed
+alongside `dscleaner`), so you can type:
+
+```bash
+dc /Volumes/USB
+dc cp ~/project /Volumes/USB
+dc pack release.7z ~/project
+dc install-service /Volumes
+```
 
 ## All commands
 
